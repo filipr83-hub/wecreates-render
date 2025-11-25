@@ -24,7 +24,6 @@ async function downloadImage(url) {
   });
 }
 
-// Text wrapping helper
 function wrapLines(ctx, text, maxWidth) {
   const words = text.split(' ');
   const lines = [];
@@ -56,7 +55,7 @@ app.post('/render-slide', async (req, res) => {
     const canvas = new Canvas(WIDTH, HEIGHT);
     const ctx = canvas.getContext('2d');
 
-    // === 1. LOAD BACKGROUND ===
+    // === BACKGROUND ===
     try {
       const buffer = await downloadImage(backgroundUrl);
       const img = await loadImage(buffer);
@@ -73,11 +72,11 @@ app.post('/render-slide', async (req, res) => {
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
     }
 
-    // === 2. REMOVE BLACK OVERLAY OR TONE IT DOWN ===
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)'; // was 0.45
+    // === SOFT OVERLAY ===
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-    // === 3. TITLE TEXT ===
+    // === TITLE ===
     const padding = 64;
     const maxWidth = WIDTH - padding * 2;
 
@@ -97,9 +96,9 @@ app.post('/render-slide', async (req, res) => {
       y += titleLineHeight;
     }
 
-    y += 40; // spacing
+    y += 40;
 
-    // === 4. BODY TEXT ===
+    // === BODY TEXT ===
     ctx.font = '40px sans-serif';
     ctx.fillStyle = '#e5e7eb';
     ctx.shadowBlur = 8;
@@ -108,12 +107,11 @@ app.post('/render-slide', async (req, res) => {
     const bodyLineHeight = 52;
 
     for (const line of textLines) {
-      if (y + bodyLineHeight > HEIGHT - 100) break; // safety cut
+      if (y + bodyLineHeight > HEIGHT - 100) break;
       ctx.fillText(line, padding, y);
       y += bodyLineHeight;
     }
 
-    // === 5. OUTPUT ===
     const png = await canvas.toBuffer('png');
 
     res.json({
@@ -133,4 +131,5 @@ app.get('/health', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log('Server running on port', PORT);
 });
+
 
