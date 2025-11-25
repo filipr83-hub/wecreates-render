@@ -8,160 +8,129 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Helper function to download image from URL
 async function downloadImage(url) {
   return new Promise((resolve, reject) => {
-    const protocol = url.startsWith('https') ? https : http;
-    
-    protocol.get(url, (response) => {
+    const client = url.startsWith('https') ? https : http;
+    client.get(url, (response) => {
       if (response.statusCode !== 200) {
-        reject(new Error(`Failed to download image: ${response.statusCode}`));
+        reject(new Error(`HTTP ${response.statusCode}`));
         return;
       }
 
       const chunks = [];
       response.on('data', (chunk) => chunks.push(chunk));
-      response.on('end', () => {
-        const buffer = Buffer.concat(chunks);
-        resolve(buffer);
-      });
+      response.on('end', () => resolve(Buffer.concat(chunks)));
     }).on('error', reject);
   });
 }
 
-// Helper function to wrap text
-function wrapText(ctx, text, maxWidth) {
+// Text wrapping helper
+function wrapLines(ctx, text, maxWidth) {
   const words = text.split(' ');
   const lines = [];
-  let currentLine = '';
+  let line = '';
 
   for (const word of words) {
-    const testLine = currentLine ? `${currentLine} ${word}` : word;
-    const metrics = ctx.measureText(testLine);
-    
-    if (metrics.width > maxWidth && currentLine) {
-      lines.push(currentLine);
-      currentLine = word;
+    const test = line ? line + ' ' + word : word;
+    if (ctx.measureText(test).width > maxWidth) {
+      lines.push(line);
+      line = word;
     } else {
-      currentLine = testLine;
+      line = test;
     }
   }
-  
-  if (currentLine) {
-    lines.push(currentLine);
-  }
-  
+  if (line) lines.push(line);
   return lines;
 }
 
-// POST /render-slide endpoint
 app.post('/render-slide', async (req, res) => {
   try {
     const { backgroundUrl, title, text } = req.body;
 
-    // Validate required fields
     if (!title || !text) {
-      return res.status(400).json({ 
-        error: 'Missing required fields. Both "title" and "text" are required.' 
-      });
+      return res.status(400).json({ error: 'Missing title or text' });
     }
 
-    // Canvas dimensions for Instagram carousel
     const WIDTH = 1080;
     const HEIGHT = 1350;
     const canvas = new Canvas(WIDTH, HEIGHT);
     const ctx = canvas.getContext('2d');
 
-    // Load and draw background image
-    let backgroundImage;
+    // === 1. LOAD BACKGROUND ===
     try {
-      if (backgroundUrl) {
-        const imageBuffer = await downloadImage(backgroundUrl);
-        backgroundImage = await loadImage(imageBuffer);
-      }
-    } catch (error) {
-      console.error('Failed to load background image:', error.message);
-      // Will use fallback background
-    }
+      const buffer = await downloadImage(backgroundUrl);
+      const img = await loadImage(buffer);
 
-    if (backgroundImage) {
-      // Calculate scaling to fill the canvas while maintaining aspect ratio
-      const scale = Math.max(WIDTH / backgroundImage.width, HEIGHT / backgroundImage.height);
-      const scaledWidth = backgroundImage.width * scale;
-      const scaledHeight = backgroundImage.height * scale;
-      
-      // Center the image
-      const x = (WIDTH - scaledWidth) / 2;
-      const y = (HEIGHT - scaledHeight) / 2;
-      
-      ctx.drawImage(backgroundImage, x, y, scaledWidth, scaledHeight);
-    } else {
-      // Fallback: dark background
-      ctx.fillStyle = '#1a1a1a';
+      const scale = Math.max(WIDTH / img.width, HEIGHT / img.height);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      const x = (WIDTH - w) / 2;
+      const y = (HEIGHT - h) / 2;
+
+      ctx.drawImage(img, x, y, w, h);
+    } catch {
+      ctx.fillStyle = '#111';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
     }
 
-    // Draw semi-transparent black overlay
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    // === 2. REMOVE BLACK OVERLAY OR TONE IT DOWN ===
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)'; // was 0.45
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-    // Set up title text styling
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 72px sans-serif';
+    // === 3. TITLE TEXT ===
+    const padding = 64;
+    const maxWidth = WIDTH - padding * 2;
+
     ctx.textBaseline = 'top';
+    ctx.font = 'bold 60px sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+    ctx.shadowBlur = 12;
 
-    // Draw title with line wrapping
-    const titlePadding = 120;
-    const maxTitleWidth = WIDTH - (titlePadding * 2);
-    const titleLines = wrapText(ctx, title, maxTitleWidth);
-    
-    let yPosition = 120; // Start position from top
-    titleLines.forEach((line) => {
-      ctx.fillText(line, titlePadding, yPosition);
-      yPosition += 90; // Line height for title (72px font + spacing)
-    });
+    const titleLines = wrapLines(ctx, title, maxWidth);
 
-    // Add spacing between title and body text
-    yPosition += 40;
+    let y = 80;
+    const titleLineHeight = 72;
 
-    // Set up body text styling
+    for (const line of titleLines) {
+      ctx.fillText(line, padding, y);
+      y += titleLineHeight;
+    }
+
+    y += 40; // spacing
+
+    // === 4. BODY TEXT ===
+    ctx.font = '40px sans-serif';
     ctx.fillStyle = '#e5e7eb';
-    ctx.font = '44px sans-serif';
-    
-    // Draw body text with line wrapping and spacing
-    const bodyLines = wrapText(ctx, text, maxTitleWidth);
-    const lineHeight = 44 * 1.3; // 1.3 line spacing
-    
-    bodyLines.forEach((line) => {
-      ctx.fillText(line, titlePadding, yPosition);
-      yPosition += lineHeight;
-    });
+    ctx.shadowBlur = 8;
 
-    // Convert canvas to PNG buffer
-    const pngBuffer = await canvas.toBuffer('png');
-    
-    // Convert to base64
-    const base64Image = `data:image/png;base64,${pngBuffer.toString('base64')}`;
+    const textLines = wrapLines(ctx, text, maxWidth);
+    const bodyLineHeight = 52;
 
-    // Return JSON response
+    for (const line of textLines) {
+      if (y + bodyLineHeight > HEIGHT - 100) break; // safety cut
+      ctx.fillText(line, padding, y);
+      y += bodyLineHeight;
+    }
+
+    // === 5. OUTPUT ===
+    const png = await canvas.toBuffer('png');
+
     res.json({
-      imageBase64: base64Image
+      imageBase64: `data:image/png;base64,${png.toString('base64')}`
     });
 
-  } catch (error) {
-    console.error('Error rendering slide:', error);
-    res.status(500).json({ 
-      error: 'Internal server error while rendering slide' 
-    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Render error' });
   }
 });
 
-// Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Start server
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log('Server running on port', PORT);
 });
+
